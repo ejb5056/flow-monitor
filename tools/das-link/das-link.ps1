@@ -15,7 +15,7 @@ $cfgPath = Join-Path $PSScriptRoot 'das-link.json'
 # desktop (all monitors together), 'right' = right half, 'all' = every montage.
 $Side = 'all'
 
-Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $desk = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $midX = $desk.Left + $desk.Width / 2
 
@@ -78,8 +78,16 @@ function Get-Montages {
         $inSide = ($Side -eq 'all') -or ($Side -eq 'left' -and $cx -lt $midX) -or ($Side -eq 'right' -and $cx -ge $midX)
         if ($inSide) { [pscustomobject]@{ Sym = $hit.Groups[1].Value; X = $w.X; Y = $w.Y; Title = $w.Title } }
     }
-    # Rows 60px apart count as one row, so slight misalignment doesn't swap numbering.
-    $sorted = @($m | Sort-Object @{ e = { [math]::Floor($_.Y / 60) } }, X)
+    # Number monitor by monitor (monitors left to right, then top to bottom), and within a monitor
+    # top to bottom, then left to right. Rows within 60px count as one row.
+    $screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object @{ e = { $_.Bounds.X } }, @{ e = { $_.Bounds.Y } })
+    foreach ($x in $m) {
+        $pt = New-Object System.Drawing.Point ([int]($x.X + 20)), ([int]($x.Y + 10))
+        $idx = 0
+        for ($k = 0; $k -lt $screens.Count; $k++) { if ($screens[$k].Bounds.Contains($pt)) { $idx = $k; break } }
+        $x | Add-Member -NotePropertyName Screen -NotePropertyValue ($idx + 1)
+    }
+    $sorted = @($m | Sort-Object Screen, @{ e = { [math]::Floor($_.Y / 60) } }, X)
     $i = 0
     foreach ($s in $sorted) { $i++; $s | Add-Member -NotePropertyName Slot -NotePropertyValue $i }
     return , $sorted
@@ -94,22 +102,16 @@ if ($Test) {
         if ($procs.Count -eq 0) { Write-Host "`nDAS (dastrader.exe) is not running." }
         else {
             $wins = [DasWindows]::ForProcesses([int[]]($procs | ForEach-Object { $_.Id }))
-            Write-Host ("`nMontages linked ({0} side of the desktop):" -f $Side)
+            Write-Host "`nMontages linked (numbered monitor by monitor, top-left first):"
             $ms = Get-Montages
             if (-not $ms -or $ms.Count -eq 0) { Write-Host "  none" }
-            foreach ($x in $ms) { Write-Host ("  DAS {0}: {1,-6}  at ({2},{3})" -f $x.Slot, $x.Sym, $x.X, $x.Y) }
+            foreach ($x in $ms) { Write-Host ("  DAS {0}: {1,-6}  monitor {2}" -f $x.Slot, $x.Sym, $x.Screen) }
             $skipped = foreach ($w in $wins) {
                 $hit = [regex]::Match($w.Title, $montageRx)
                 if ($hit.Success -and -not ($ms | Where-Object { $_.Title -eq $w.Title })) { "{0} at ({1},{2})" -f $hit.Groups[1].Value, $w.X, $w.Y }
             }
-            Write-Host "`nMontages ignored (other side or minimized):"
+            Write-Host "`nMontages ignored (minimized):"
             if (-not $skipped) { Write-Host "  none" } else { foreach ($k in $skipped) { Write-Host "  $k" } }
-            $tops = @($wins | Where-Object { $_.Top })
-            Write-Host ("`nDAS windows ({0} total, first 20):" -f $tops.Count)
-            foreach ($w in ($tops | Select-Object -First 20)) {
-                $t = $w.Title; if ($t.Length -gt 60) { $t = $t.Substring(0, 60) }
-                Write-Host ("  {0}{1}" -f $t, $(if ($w.Minimized) { '  [minimized]' } else { '' }))
-            }
         }
         Start-Sleep -Seconds 1
     }
