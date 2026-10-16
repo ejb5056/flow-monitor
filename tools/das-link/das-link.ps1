@@ -28,7 +28,7 @@ public static class DasWindows {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
 
-    public class Win { public long Handle; public string Title; public int X; public int Y; public bool Minimized; }
+    public class Win { public long Handle; public string Title; public int X; public int Y; public bool Minimized; public bool Top; }
 
     public static List<Win> ForProcesses(int[] pids) {
         var want = new HashSet<uint>();
@@ -42,12 +42,12 @@ public static class DasWindows {
             if (sb.Length == 0) return true;
             RECT r; GetWindowRect(h, out r);
             seen.Add(h.ToInt64());
-            found.Add(new Win { Handle = h.ToInt64(), Title = sb.ToString(), X = r.L, Y = r.T, Minimized = IsIconic(h) });
+            found.Add(new Win { Handle = h.ToInt64(), Title = sb.ToString(), X = r.L, Y = r.T, Minimized = IsIconic(h), Top = l.ToInt64() == 1 });
             return true;
         };
         EnumWindows((h, l) => {
             uint pid; GetWindowThreadProcessId(h, out pid);
-            if (want.Contains(pid)) { take(h, l); EnumChildWindows(h, take, IntPtr.Zero); }
+            if (want.Contains(pid)) { take(h, new IntPtr(1)); EnumChildWindows(h, take, IntPtr.Zero); }
             return true;
         }, IntPtr.Zero);
         return found;
@@ -87,8 +87,12 @@ if ($Test) {
             $ms = Get-Montages
             if (-not $ms -or $ms.Count -eq 0) { Write-Host "  none" }
             foreach ($x in $ms) { Write-Host ("  DAS {0}: {1,-6}  at ({2},{3})" -f $x.Slot, $x.Sym, $x.X, $x.Y) }
-            Write-Host "`nAll DAS window titles:"
-            foreach ($w in $wins) { Write-Host ("  {0}{1}" -f $w.Title, $(if ($w.Minimized) { '  [minimized]' } else { '' })) }
+            $tops = @($wins | Where-Object { $_.Top })
+            Write-Host ("`nDAS windows ({0} total, first 20):" -f $tops.Count)
+            foreach ($w in ($tops | Select-Object -First 20)) {
+                $t = $w.Title; if ($t.Length -gt 60) { $t = $t.Substring(0, 60) }
+                Write-Host ("  {0}{1}" -f $t, $(if ($w.Minimized) { '  [minimized]' } else { '' }))
+            }
         }
         Start-Sleep -Seconds 1
     }
