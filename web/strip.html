@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow · watchlist</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><b>FLOW</b><span class="clock" id="clock"></span></div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="badge" id="badge">…</span>
+      <button class="btn ghost" id="editBtn" type="button" aria-expanded="false">Edit list</button>
+    </div>
+  </header>
+  <form class="wl-edit" id="wlForm" hidden>
+    <label for="wlIn" class="mute" style="font-size:11px;align-self:center">Tickers</label>
+    <input id="wlIn" autocomplete="off" spellcheck="false" aria-describedby="wlHint">
+    <button class="btn" type="submit">Save</button>
+  </form>
+  <div class="cols strip-head" aria-hidden="true">
+    <span>NAME</span><span>COMPOSITE −100 … +100</span><span>γ</span><span style="display:flex;justify-content:space-between"><span>◂ PUT</span><span>CALL ▸</span></span>
+  </div>
+  <div class="list noscroll" id="list"></div>
+  <footer class="foot"><span id="mkt">—</span><span id="note">Tap a row for detail</span></footer>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let open = FM.store.get('fm.strip.open', null);
+let last = null, wsUp = false;
+FM.clock($('clock'));
+
+function row(d) {
+  const lv = d.levels || {};
+  const s = d.score || 0;
+  const c = s > 0 ? 'bull' : s < 0 ? 'bear' : 'neu';
+  const g = lv.regime > 0 ? ['pos', '+γ'] : lv.regime < 0 ? ['neg', '−γ'] : ['na', '·'];
+  let pos = 50;
+  if (lv.put_wall && lv.call_wall && lv.call_wall > lv.put_wall && d.spot)
+    pos = Math.max(0, Math.min(100, (d.spot - lv.put_wall) / (lv.call_wall - lv.put_wall) * 100));
+  const isOpen = open === d.sym;
+  const cm = d.comps || {};
+  const prem = cm.premium || {}, sw = cm.sweep || {}, de = cm.delta || {}, op = cm.opening || {};
+  const detail = isOpen ? `
+    <div class="detail">
+      <div class="mono" style="display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--text2)">
+        <span>CW ${FM.strike(lv.call_wall)} <span class="mute">${FM.pct(lv.call_wall, d.spot)}</span></span>
+        <span>FLIP ${lv.flip ? FM.px(lv.flip) : '—'}</span>
+        <span>PW ${FM.strike(lv.put_wall)} <span class="mute">${FM.pct(lv.put_wall, d.spot)}</span></span>
+        <span>MP ${FM.strike(lv.max_pain)}</span>
+      </div>
+      <div class="chips">
+        <span class="chip">Net prem ${FM.money(prem.net)}${prem.z != null ? ' · ' + FM.signed(prem.z, 1) + 'σ' : ''}</span>
+        <span class="chip">Sweeps ${sw.bull_share == null ? '—' : Math.round(sw.bull_share * 100) + '% bull'}</span>
+        <span class="chip">Net delta ${FM.money(de.usd)}</span>
+        <span class="chip">Opening ${op.bull_share == null ? '—' : Math.round(op.bull_share * 100) + '% bull'}</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn" type="button" data-pop="${FM.esc(d.sym)}">Open panel</button>
+        <span class="mute">${d.calibrated ? '' : 'Calibrating: scored as bull/bear imbalance until 5 sessions of history'}</span>
+      </div>
+    </div>` : '';
+  return `<div class="row${isOpen ? ' open' : ''}">
+    <button type="button" class="cols" data-sym="${FM.esc(d.sym)}" aria-expanded="${isOpen}">
+      <span class="tk"><b>${FM.esc(d.sym)}</b><span>${FM.px(d.spot)}</span></span>
+      <span style="display:flex;align-items:center;gap:6px">
+        <span class="bar"><span class="zero"></span><span class="fill" style="${FM.barStyle(s / 100)}"></span></span>
+        <span class="score ${c}">${s > 0 ? '+' : s < 0 ? '−' : ''}${Math.abs(s)}</span>
+      </span>
+      <span class="gam ${g[0]}">${g[1]}</span>
+      <span style="display:block">
+        <span class="rail" style="display:block"><i style="left:calc(${pos}% - 1px)"></i></span>
+        <span class="rail-l"><span>${FM.strike(lv.put_wall)}</span><span>${FM.strike(lv.call_wall)}</span></span>
+      </span>
+    </button>${detail}</div>`;
+}
+
+function render() {
+  if (!last) return;
+  const list = $('list'), y = list.scrollTop;
+  list.innerHTML = last.data.map(row).join('') || '<div class="empty">No tickers. Use Edit list.</div>';
+  list.scrollTop = y;
+  const spy = last.data.find((d) => d.sym === 'SPY') || last.data[0];
+  if (spy && spy.levels) {
+    const r = spy.levels.regime;
+    $('mkt').innerHTML = `${FM.esc(spy.sym)}: <span class="${r > 0 ? 'bull' : 'bear'}" style="font-weight:600">${r > 0 ? '+γ dampening' : r < 0 ? '−γ amplifying' : '—'}</span> · flip ${spy.levels.flip ? FM.px(spy.levels.flip) : '—'}`;
+  }
+  FM.badge($('badge'), last.status, wsUp);
+}
+
+$('list').addEventListener('click', (e) => {
+  const pop = e.target.closest('[data-pop]');
+  if (pop) {
+    const s = pop.dataset.pop;
+    window.open('/panel?t=' + encodeURIComponent(s), 'fm-panel-' + s, 'width=420,height=760');
+    return;
+  }
+  const b = e.target.closest('[data-sym]');
+  if (!b) return;
+  open = open === b.dataset.sym ? null : b.dataset.sym;
+  FM.store.set('fm.strip.open', open);
+  render();
+});
+
+$('editBtn').addEventListener('click', () => {
+  const f = $('wlForm'), show = f.hidden;
+  f.hidden = !show;
+  $('editBtn').setAttribute('aria-expanded', String(show));
+  $('editBtn').textContent = show ? 'Close' : 'Edit list';
+  if (show) { $('wlIn').value = (last ? last.watchlist : []).join(', '); $('wlIn').focus(); }
+});
+$('wlForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await fetch('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbols: $('wlIn').value }) });
+  if (r.ok) { $('wlForm').hidden = true; $('editBtn').textContent = 'Edit list'; $('editBtn').setAttribute('aria-expanded', 'false'); }
+});
+
+FM.connect((m) => {
+  if (m.t === 'summaries') { last = m; render(); }
+}, (ws) => ws.send(JSON.stringify({ op: 'view', view: 'strip' })), (up) => { wsUp = up; FM.badge($('badge'), last && last.status, up); });
+</script>
+</body>
+</html>

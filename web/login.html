@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow · sign in</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="login">
+  <form method="post" action="/login">
+    <div class="brand"><b>FLOW</b></div>
+    <label for="pw" class="lab">PASSWORD</label>
+    <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+    <button class="btn" type="submit">Sign in</button>
+    <p id="bad" class="bear" style="display:none;margin:0;font-size:12px">Wrong password.</p>
+  </form>
+</main>
+<script>if (location.search.includes('bad=1')) document.getElementById('bad').style.display = 'block';</script>
+</body>
+</html>

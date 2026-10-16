@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow · panel</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><b>FLOW</b><span class="clock" id="clock"></span></div>
+    <span class="badge" id="badge">…</span>
+  </header>
+
+  <section class="hero" id="hero">
+    <div class="hero-top">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+        <span style="display:flex;align-items:baseline;gap:8px">
+          <label for="tk" class="lab" style="position:absolute;left:-9999px">Ticker</label>
+          <input id="tk" class="tkin" maxlength="6" autocomplete="off" spellcheck="false" title="Type a ticker and press Enter">
+          <span class="mono" style="font-size:14px;color:var(--text2)" id="spot">—</span>
+        </span>
+        <span style="font-size:11px" class="mute" id="regime">—</span>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0">
+        <span style="font-size:11px;letter-spacing:.06em" id="verdict">—</span>
+        <span class="big" id="score">—</span>
+      </div>
+    </div>
+    <svg class="spark" id="spark" viewBox="0 0 396 44" preserveAspectRatio="none" role="img" aria-label="Composite score, last 90 minutes">
+      <line x1="0" y1="22" x2="396" y2="22" stroke="#3A4352" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"></line>
+      <path id="sparkPath" d="" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke"></path>
+    </svg>
+    <div class="two">
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <span class="lab">COMPONENTS <span id="cal" style="letter-spacing:0"></span></span>
+        <div id="comps"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <span class="lab">LEVELS</span>
+        <div id="levels"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="miss" id="miss" hidden></div>
+
+  <section class="tape-wrap" id="tapeWrap">
+    <div class="tape-bar">
+      <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+        <span class="lab" id="count">TAPE</span>
+        <span class="tape-sum" id="fsum">All prints · no filters</span>
+      </div>
+      <div class="seg" role="group" aria-label="Rows shown" style="margin-left:auto" id="views"></div>
+      <button class="btn" type="button" id="fBtn" aria-expanded="false" style="min-height:28px;flex-shrink:0">Filters</button>
+    </div>
+    <div class="filters" id="filters" hidden>
+      <div id="ranges"></div>
+      <div class="frow"><span>Side</span><div class="opts" id="fSide"></div></div>
+      <div class="frow"><span>Kind</span><div class="opts" id="fKind"></div></div>
+      <div class="frow"><span>Multi-leg</span><div class="opts">
+        <button class="tog" type="button" id="fMulti"></button>
+        <button class="tog" type="button" id="fReset">Reset all</button>
+      </div></div>
+    </div>
+    <div class="tape noscroll" id="tape">
+      <div class="tcols thead" aria-hidden="true">
+        <span>TIME</span><span class="r">STRIKE</span><span>C/P</span><span>EXP</span><span class="r">DTE</span><span class="r">SIZE</span><span>SIDE</span><span class="r">PREM</span>
+      </div>
+      <div id="rows"></div>
+    </div>
+    <button type="button" class="newtag" id="newtag"></button>
+  </section>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+FM.clock($('clock'));
+const params = new URLSearchParams(location.search);
+let ticker = (params.get('t') || FM.store.get('fm.panel.last', 'SPY')).toUpperCase();
+let prints = [];            // newest first
+let spark = [];
+let summary = null, status = null, wsUp = false;
+let unseen = 0;
+const MAX_KEEP = 3000, MAX_RENDER = 600, ROW_H = 22;
+
+const DEF = { premMin: '', premMax: '', sizeMin: '', sizeMax: '', dteMin: '', dteMax: '',
+  sides: { ASK: true, BID: true, MID: true, NA: true }, kinds: { SWEEP: true, BLOCK: true, SPLIT: true, REG: true }, hideMulti: false };
+let F = Object.assign(JSON.parse(JSON.stringify(DEF)), FM.store.get('fm.filters', {}));
+let rowsShown = FM.store.get('fm.rows', 10);
+let filtersOpen = false;
+
+// ---------------- connection ----------------
+const conn = FM.connect(onMsg, (ws) => ws.send(JSON.stringify({ op: 'view', view: 'panel', ticker })),
+  (up) => { wsUp = up; FM.badge($('badge'), status, up); });
+
+function setTicker(t) {
+  t = (t || '').trim().toUpperCase();
+  if (!t || t === ticker) { $('tk').value = ticker; return; }
+  ticker = t; prints = []; spark = []; summary = null; unseen = 0;
+  FM.store.set('fm.panel.last', ticker);
+  history.replaceState(null, '', '/panel?t=' + encodeURIComponent(ticker));
+  conn.send({ op: 'view', view: 'panel', ticker });
+  renderAll();
+}
+
+function onMsg(m) {
+  if (m.t === 'summaries') {
+    status = m.status;
+    FM.badge($('badge'), status, wsUp);
+    const d = m.data.find((x) => x.sym === ticker);
+    if (d) { summary = d; renderHero(); }
+  } else if (m.t === 'snapshot' && m.sym === ticker) {
+    if (m.missing) { showMissing(m.watchlist); return; }
+    $('miss').hidden = true; $('hero').hidden = false; $('tapeWrap').hidden = false;
+    summary = m.summary;
+    prints = m.prints.slice().reverse();
+    spark = m.spark;
+    renderAll();
+  } else if (m.t === 'print' && m.p.underlying === ticker) {
+    prints.unshift(m.p);
+    if (prints.length > MAX_KEEP) prints.length = MAX_KEEP;
+    if (pass(m.p)) onNewVisible();
+    scheduleTape();
+  } else if (m.t === 'spark' && m.sym === ticker) {
+    spark.push([m.ts, m.score]);
+    renderSpark();
+  }
+}
+
+function showMissing(wl) {
+  $('hero').hidden = true; $('tapeWrap').hidden = true; $('miss').hidden = false;
+  $('miss').innerHTML = `<span>${FM.esc(ticker)} isn't on today's watchlist.</span>
+    <button class="btn" type="button" id="addTk">Add ${FM.esc(ticker)} to the watchlist</button>
+    <span class="mute" style="font-size:11px">Today: ${FM.esc((wl || []).join(', '))}</span>`;
+  $('addTk').onclick = async () => {
+    await fetch('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbols: (wl || []).concat([ticker]) }) });
+    setTimeout(() => conn.send({ op: 'view', view: 'panel', ticker }), 1500);
+  };
+}
+
+// ---------------- hero ----------------
+function renderHero() {
+  if (document.activeElement !== $('tk')) { $('tk').value = ticker; $('tk').style.width = (ticker.length + 0.6) + 'ch'; }
+  document.title = ticker + ' · Flow';
+  if (!summary) return;
+  const d = summary, s = d.score || 0, lv = d.levels || {};
+  $('spot').textContent = FM.px(d.spot);
+  const c = s > 0 ? 'bull' : s < 0 ? 'bear' : 'neu';
+  $('score').className = 'big ' + c;
+  $('score').textContent = (s > 0 ? '+' : s < 0 ? '−' : '') + Math.abs(s);
+  $('verdict').className = c; $('verdict').textContent = d.verdict;
+  $('regime').textContent = lv.regime > 0 ? 'Long gamma: dealers dampen moves · 90-min trend below'
+    : lv.regime < 0 ? 'Short gamma: dealers amplify moves · 90-min trend below' : 'Gamma regime: waiting for chain';
+  $('cal').textContent = d.calibrated ? '' : '· calibrating';
+  $('cal').title = d.calibrated ? '' : 'Scored as bull/bear imbalance until this name has 5 sessions of history';
+
+  const cm = d.comps || {};
+  const items = [
+    ['Net premium', cm.premium, (x) => x.z != null ? FM.signed(x.z, 1) + 'σ' : FM.money(x.net)],
+    ['Sweep share', cm.sweep, (x) => x.bull_share == null ? '—' : Math.round(x.bull_share * 100) + '% bull'],
+    ['Net delta', cm.delta, (x) => FM.money(x.usd)],
+    ['Opening', cm.opening, (x) => x.bull_share == null ? '—' : Math.round(x.bull_share * 100) + '% bull'],
+  ];
+  $('comps').innerHTML = items.map(([l, x, f]) => {
+    x = x || { s: 0 };
+    return `<div class="comp"><span class="l"><span>${l}</span><span class="${FM.cls(x.s)}">${f(x)}</span></span>
+      <span class="bar thin"><span class="zero"></span><span class="fill" style="${FM.barStyle(x.s || 0)}"></span></span></div>`;
+  }).join('');
+
+  const L = [['Call wall', lv.call_wall, 'bull'], ['Max pain', lv.max_pain, 'neu'], ['Spot', d.spot, ''],
+    ['γ flip', lv.flip, 'neu'], ['Put wall', lv.put_wall, 'bear']].filter((x) => x[1] != null);
+  L.sort((a, b) => b[1] - a[1]);
+  $('levels').innerHTML = L.length > 1 ? L.map(([n, v, c2]) =>
+    `<div class="lv${n === 'Spot' ? ' spot' : ''}"><span class="${c2}">${n}</span><span>${n === 'γ flip' || n === 'Spot' ? FM.px(v) : FM.strike(v)}</span><span>${n === 'Spot' ? '' : FM.pct(v, d.spot)}</span></div>`).join('')
+    : '<div class="mute" style="font-size:11px">Waiting for option chain…</div>';
+  renderSpark();
+}
+
+function renderSpark() {
+  const now = Date.now() / 1000, t0 = now - 90 * 60;
+  const pts = spark.filter((p) => p[0] >= t0).concat(summary ? [[now, summary.score]] : []);
+  const s = summary ? summary.score : 0;
+  $('sparkPath').setAttribute('stroke', s >= 0 ? FM.BULL : FM.BEAR);
+  $('sparkPath').setAttribute('d', pts.length < 2 ? '' :
+    'M' + pts.map((p) => ((p[0] - t0) / (90 * 60) * 396).toFixed(1) + ',' + (22 - p[1] * 0.2).toFixed(1)).join(' L'));
+}
+
+// ---------------- filters ----------------
+const num = (v) => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
+const inR = (v, lo, hi) => (num(lo) == null || v >= num(lo)) && (num(hi) == null || v <= num(hi));
+function pass(p) {
+  return inR(p.premium, F.premMin, F.premMax) && inR(p.size, F.sizeMin, F.sizeMax) && inR(p.dte, F.dteMin, F.dteMax)
+    && F.sides[p.side] !== false && F.kinds[p.kind] !== false && !(F.hideMulti && p.multi);
+}
+function saveF() { FM.store.set('fm.filters', F); }
+
+function buildFilters() {
+  const R = [['Premium', 'prem', 'dollars'], ['Size', 'size', 'contracts'], ['DTE', 'dte', 'days']];
+  $('ranges').innerHTML = R.map(([l, k, u]) => `<div class="frow" style="margin-bottom:6px"><span>${l}</span><div class="opts">
+    <label>min <input type="number" inputmode="decimal" min="0" data-k="${k}Min" value="${FM.esc(F[k + 'Min'])}" placeholder="none" aria-label="${l} minimum"></label>
+    <label>max <input type="number" inputmode="decimal" min="0" data-k="${k}Max" value="${FM.esc(F[k + 'Max'])}" placeholder="none" aria-label="${l} maximum"></label>
+    <span>${u}</span></div></div>`).join('');
+  $('ranges').querySelectorAll('input').forEach((i) => i.addEventListener('input', () => { F[i.dataset.k] = i.value; saveF(); renderTape(true); }));
+  const tg = (el, key, names, labels) => {
+    el.innerHTML = names.map((n, i) => `<button type="button" class="tog${F[key][n] !== false ? ' on' : ''}" aria-pressed="${F[key][n] !== false}" data-n="${n}">${labels[i]}</button>`).join('');
+    el.querySelectorAll('button').forEach((b) => b.onclick = () => { F[key][b.dataset.n] = F[key][b.dataset.n] === false; saveF(); buildFilters(); renderTape(true); });
+  };
+  tg($('fSide'), 'sides', ['ASK', 'BID', 'MID', 'NA'], ['Ask', 'Bid', 'Mid', 'Unknown']);
+  tg($('fKind'), 'kinds', ['SWEEP', 'BLOCK', 'SPLIT', 'REG'], ['Sweep', 'Block', 'Split', 'Regular']);
+  $('fMulti').className = 'tog' + (F.hideMulti ? ' on' : '');
+  $('fMulti').textContent = F.hideMulti ? 'Hidden' : 'Shown';
+  $('fMulti').setAttribute('aria-pressed', String(F.hideMulti));
+}
+$('fMulti').onclick = () => { F.hideMulti = !F.hideMulti; saveF(); buildFilters(); renderTape(true); };
+$('fReset').onclick = () => { F = JSON.parse(JSON.stringify(DEF)); saveF(); buildFilters(); renderTape(true); };
+$('fBtn').onclick = () => { filtersOpen = !filtersOpen; $('filters').hidden = !filtersOpen; $('fBtn').setAttribute('aria-expanded', String(filtersOpen)); renderSummary(); };
+
+function filterSummary() {
+  const parts = [];
+  const rt = (n, lo, hi, f) => { const a = num(lo), b = num(hi);
+    if (a != null && b != null) parts.push(n + ' ' + f(a) + '–' + f(b)); else if (a != null) parts.push(n + ' ≥ ' + f(a)); else if (b != null) parts.push(n + ' ≤ ' + f(b)); };
+  rt('Prem', F.premMin, F.premMax, FM.money); rt('Size', F.sizeMin, F.sizeMax, (v) => v.toLocaleString('en-US')); rt('DTE', F.dteMin, F.dteMax, (v) => v + 'd');
+  const so = Object.keys(DEF.sides).filter((k) => F.sides[k] === false); if (so.length) parts.push('no ' + so.join('/').toLowerCase());
+  const ko = Object.keys(DEF.kinds).filter((k) => F.kinds[k] === false); if (ko.length) parts.push('no ' + ko.join('/').toLowerCase());
+  if (F.hideMulti) parts.push('multi-leg hidden');
+  return parts;
+}
+function renderSummary(shown) {
+  const parts = filterSummary();
+  $('fsum').textContent = parts.length ? parts.join(' · ') : 'All prints · no filters';
+  $('fBtn').textContent = (filtersOpen ? 'Close' : 'Filters') + (parts.length ? ' (' + parts.length + ')' : '');
+  if (shown != null) $('count').textContent = `TAPE · ${shown.toLocaleString('en-US')} OF ${prints.length.toLocaleString('en-US')} PRINTS`;
+}
+
+// ---------------- rows shown ----------------
+function buildViews() {
+  $('views').innerHTML = [[5, '5'], [10, '10'], [0, 'All']].map(([n, t]) =>
+    `<button type="button" class="tog${rowsShown === n ? ' on' : ''}" aria-pressed="${rowsShown === n}" data-n="${n}">${t}</button>`).join('');
+  $('views').querySelectorAll('button').forEach((b) => b.onclick = () => { rowsShown = Number(b.dataset.n); FM.store.set('fm.rows', rowsShown); buildViews(); sizeTape(); });
+}
+function sizeTape() {
+  const t = $('tape');
+  if (rowsShown) { t.style.flex = 'none'; t.style.height = (ROW_H * (rowsShown + 1) + 1) + 'px'; t.style.borderBottom = '1px solid var(--line)'; }
+  else { t.style.flex = '1 1 auto'; t.style.height = ''; t.style.borderBottom = ''; }
+  $('tapeWrap').style.flex = rowsShown ? 'none' : '1 1 auto';
+}
+
+// ---------------- tape ----------------
+let tapeQueued = false;
+function scheduleTape() { if (!tapeQueued) { tapeQueued = true; requestAnimationFrame(() => { tapeQueued = false; renderTape(false); }); } }
+
+function rowHtml(p) {
+  const c = p.bull == null ? 'neu' : p.bull ? 'bull' : 'bear';
+  const exp = p.expiry.slice(5).replace('-', '/').replace(/^0/, '').replace('/0', '/');
+  const side = p.side === 'NA' ? '—' : p.side;
+  return `<div class="tcols trow${p.premium >= 5e5 ? ' big' : ''}">
+    <span class="mute">${FM.time(p.ts)}</span><span class="r ${c}">${FM.strike(p.strike)}</span><span class="${c}" style="font-weight:600">${p.cp}</span>
+    <span class="neu">${exp}</span><span class="r neu">${p.dte}d</span><span class="r">${p.size.toLocaleString('en-US')}</span>
+    <span class="${c}">${side}</span><span class="r" style="${p.premium >= 1e5 ? 'font-weight:600;color:var(--hi)' : 'color:var(--text2)'}">${FM.money(p.premium)}</span></div>`;
+}
+
+let lastTopId = null;
+function renderTape(reset) {
+  const t = $('tape');
+  const vis = [];
+  for (const p of prints) { if (pass(p)) { vis.push(p); if (vis.length >= MAX_RENDER) break; } }
+  const shownTotal = reset || vis.length < MAX_RENDER ? prints.filter(pass).length : null;
+  // keep the reader's place when new rows arrive above them
+  let added = 0;
+  if (!reset && lastTopId != null && t.scrollTop > 2) {
+    const i = vis.findIndex((p) => p.id === lastTopId);
+    if (i > 0) added = i;
+  }
+  const y = t.scrollTop;
+  $('rows').innerHTML = vis.length ? vis.map(rowHtml).join('') : '<div class="empty">' + (prints.length ? 'No prints match these filters.' : 'Waiting for prints…') + '</div>';
+  lastTopId = vis.length ? vis[0].id : null;
+  if (reset) { t.scrollTop = 0; unseen = 0; }
+  else if (added) t.scrollTop = y + added * ROW_H;
+  renderSummary(shownTotal != null ? shownTotal : undefined);
+  renderNewTag();
+}
+function onNewVisible() { if ($('tape').scrollTop > 2) unseen++; }
+function renderNewTag() {
+  const n = $('newtag');
+  if (unseen > 0 && $('tape').scrollTop > 2) { n.style.top = ($('tape').offsetTop + 26) + 'px'; n.style.display = 'block'; n.textContent = unseen + ' new ↑'; }
+  else { n.style.display = 'none'; if ($('tape').scrollTop <= 2) unseen = 0; }
+}
+$('newtag').onclick = () => { $('tape').scrollTop = 0; unseen = 0; renderNewTag(); };
+$('tape').addEventListener('scroll', renderNewTag, { passive: true });
+
+$('tk').addEventListener('keydown', (e) => { if (e.key === 'Enter') { setTicker($('tk').value); $('tk').blur(); } if (e.key === 'Escape') { $('tk').value = ticker; $('tk').blur(); } });
+$('tk').addEventListener('blur', () => { $('tk').value = ticker; $('tk').style.width = (ticker.length + 0.6) + 'ch'; });
+$('tk').addEventListener('focus', () => { $('tk').style.width = '6.6ch'; $('tk').select(); });
+
+function renderAll() { renderHero(); renderTape(true); }
+buildFilters(); buildViews(); sizeTape(); renderAll();
+</script>
+</body>
+</html>
