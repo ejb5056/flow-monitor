@@ -11,6 +11,14 @@ param([switch]$Test, [switch]$Reset)
 $ErrorActionPreference = 'Stop'
 $cfgPath = Join-Path $PSScriptRoot 'das-link.json'
 
+# Which montages count: 'left' = only those whose window centre is in the left half of the whole
+# desktop (all monitors together), 'right' = right half, 'all' = every montage.
+$Side = 'left'
+
+Add-Type -AssemblyName System.Windows.Forms
+$desk = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$midX = $desk.Left + $desk.Width / 2
+
 Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
@@ -28,7 +36,7 @@ public static class DasWindows {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
 
-    public class Win { public long Handle; public string Title; public int X; public int Y; public bool Minimized; public bool Top; }
+    public class Win { public long Handle; public string Title; public int X; public int Y; public int W; public bool Minimized; public bool Top; }
 
     public static List<Win> ForProcesses(int[] pids) {
         var want = new HashSet<uint>();
@@ -42,7 +50,7 @@ public static class DasWindows {
             if (sb.Length == 0) return true;
             RECT r; GetWindowRect(h, out r);
             seen.Add(h.ToInt64());
-            found.Add(new Win { Handle = h.ToInt64(), Title = sb.ToString(), X = r.L, Y = r.T, Minimized = IsIconic(h), Top = l.ToInt64() == 1 });
+            found.Add(new Win { Handle = h.ToInt64(), Title = sb.ToString(), X = r.L, Y = r.T, W = r.R - r.L, Minimized = IsIconic(h), Top = l.ToInt64() == 1 });
             return true;
         };
         EnumWindows((h, l) => {
@@ -65,7 +73,10 @@ function Get-Montages {
     $m = foreach ($w in $wins) {
         if ($w.Minimized) { continue }
         $hit = [regex]::Match($w.Title, $montageRx)
-        if ($hit.Success) { [pscustomobject]@{ Sym = $hit.Groups[1].Value; X = $w.X; Y = $w.Y; Title = $w.Title } }
+        if (-not $hit.Success) { continue }
+        $cx = $w.X + $w.W / 2
+        $inSide = ($Side -eq 'all') -or ($Side -eq 'left' -and $cx -lt $midX) -or ($Side -eq 'right' -and $cx -ge $midX)
+        if ($inSide) { [pscustomobject]@{ Sym = $hit.Groups[1].Value; X = $w.X; Y = $w.Y; Title = $w.Title } }
     }
     # Rows 60px apart count as one row, so slight misalignment doesn't swap numbering.
     $sorted = @($m | Sort-Object @{ e = { [math]::Floor($_.Y / 60) } }, X)
@@ -83,10 +94,16 @@ if ($Test) {
         if ($procs.Count -eq 0) { Write-Host "`nDAS (dastrader.exe) is not running." }
         else {
             $wins = [DasWindows]::ForProcesses([int[]]($procs | ForEach-Object { $_.Id }))
-            Write-Host "`nMontages detected:"
+            Write-Host ("`nMontages linked ({0} side of the desktop):" -f $Side)
             $ms = Get-Montages
             if (-not $ms -or $ms.Count -eq 0) { Write-Host "  none" }
             foreach ($x in $ms) { Write-Host ("  DAS {0}: {1,-6}  at ({2},{3})" -f $x.Slot, $x.Sym, $x.X, $x.Y) }
+            $skipped = foreach ($w in $wins) {
+                $hit = [regex]::Match($w.Title, $montageRx)
+                if ($hit.Success -and -not ($ms | Where-Object { $_.Title -eq $w.Title })) { "{0} at ({1},{2})" -f $hit.Groups[1].Value, $w.X, $w.Y }
+            }
+            Write-Host "`nMontages ignored (other side or minimized):"
+            if (-not $skipped) { Write-Host "  none" } else { foreach ($k in $skipped) { Write-Host "  $k" } }
             $tops = @($wins | Where-Object { $_.Top })
             Write-Host ("`nDAS windows ({0} total, first 20):" -f $tops.Count)
             foreach ($w in ($tops | Select-Object -First 20)) {
