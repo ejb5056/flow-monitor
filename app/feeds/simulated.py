@@ -78,12 +78,12 @@ class SimFeed:
                 await self.hub.set_chain(s, self.chains[s], self.px[s])
 
     async def run(self):
-        await self.on_watchlist(self.hub.watchlist)
+        await self.on_watchlist(self.hub.tracked())
         self.hub.status.update(connected=True, msg="simulated market")
         exch = list("ABCHIJMNPQTWXZ")
         while True:
             now = time.time()
-            for sym in list(self.hub.watchlist):
+            for sym in self.hub.tracked():
                 if sym not in self.px:
                     continue
                 s = self.px[sym] = self.px[sym] * math.exp(self.rng.gauss(0.00002 * self.bias[sym], 0.0006))

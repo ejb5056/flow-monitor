@@ -164,7 +164,7 @@ class AlpacaFeed:
 
     async def chain_loop(self):
         while True:
-            for sym in list(self.hub.watchlist):
+            for sym in self.hub.tracked():
                 try:
                     await self.refresh_chain(sym)
                 except Exception as e:
@@ -177,7 +177,7 @@ class AlpacaFeed:
         """REST spot every few seconds as a backstop to the stock stream (and the only source for prev close)."""
         while True:
             try:
-                snaps = await self.rest.stock_snapshots(self.hub.watchlist)
+                snaps = await self.rest.stock_snapshots(self.hub.tracked())
                 for sym, s in (snaps or {}).items():
                     lt = (s or {}).get("latestTrade") or {}
                     pc = ((s or {}).get("prevDailyBar") or {}).get("c")
@@ -192,7 +192,7 @@ class AlpacaFeed:
 
     # ---- quote selection ----------------------------------------------------------------------
     def wanted_quotes(self) -> set[str]:
-        names = [s for s in self.hub.watchlist if s in self.hub.t and self.hub.t[s].chain]
+        names = [s for s in self.hub.tracked() if s in self.hub.t and self.hub.t[s].chain]
         if not names:
             return set()
         per = max(10, config.QUOTE_BUDGET // len(names))
@@ -217,7 +217,7 @@ class AlpacaFeed:
         if config.TRADES_SUBSCRIPTION == "wildcard":
             want_t = {"*"}
         else:
-            want_t = {r for s in self.hub.watchlist if s in self.hub.t for r in self.hub.t[s].chain}
+            want_t = {r for s in self.hub.tracked() if s in self.hub.t for r in self.hub.t[s].chain}
         add_t, drop_t = want_t - self.trade_subs, self.trade_subs - want_t
         if drop_q or drop_t:
             await self._osend({"action": "unsubscribe", "quotes": sorted(drop_q), "trades": sorted(drop_t)})
@@ -293,7 +293,7 @@ class AlpacaFeed:
                 async with websockets.connect(url, ping_interval=20) as ws:
                     self._stock_ws = ws
                     await ws.send(json.dumps({"action": "auth", "key": config.ALPACA_KEY_ID, "secret": config.ALPACA_SECRET}))
-                    await ws.send(json.dumps({"action": "subscribe", "trades": [s for s in self.hub.watchlist]}))
+                    await ws.send(json.dumps({"action": "subscribe", "trades": self.hub.tracked()}))
                     backoff = 1
                     async for raw in ws:
                         for m in json.loads(raw):

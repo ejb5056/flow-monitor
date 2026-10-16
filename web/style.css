@@ -97,3 +97,5 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .login input{height:36px;padding:0 10px;background:var(--bg2);border:1px solid var(--edge);border-radius:3px;color:var(--hi)}
 .login .btn{min-height:36px}
 .ml{display:inline-block;margin-left:4px;padding:0 3px;border:1px solid var(--edge);border-radius:2px;font-size:9px;line-height:12px;color:var(--mute);vertical-align:1px}
+.sel{height:24px;max-width:130px;padding:0 4px;background:var(--bg2);border:1px solid var(--line);border-radius:3px;color:var(--mute);font-family:var(--mono);font-size:11px}
+.sel.on{color:var(--bull);border-color:#2F5F86}

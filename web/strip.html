@@ -82,7 +82,7 @@ function row(d) {
 function render() {
   if (!last) return;
   const list = $('list'), y = list.scrollTop;
-  list.innerHTML = last.data.map(row).join('') || '<div class="empty">No tickers. Use Edit list.</div>';
+  list.innerHTML = last.data.filter((d) => last.watchlist.includes(d.sym)).map(row).join('') || '<div class="empty">No tickers. Use Edit list.</div>';
   list.scrollTop = y;
   const spy = last.data.find((d) => d.sym === 'SPY') || last.data[0];
   if (spy && spy.levels) {

@@ -11,7 +11,11 @@
 <div class="app">
   <header class="top">
     <div class="brand"><b>FLOW</b><span class="clock" id="clock"></span></div>
-    <span class="badge" id="badge">…</span>
+    <div style="display:flex;align-items:center;gap:6px;min-width:0">
+      <label for="follow" class="lab" style="letter-spacing:.04em">LINK</label>
+      <select id="follow" class="sel" title="Follow a DAS montage"></select>
+      <span class="badge" id="badge">…</span>
+    </div>
   </header>
 
   <section class="hero" id="hero">
@@ -80,6 +84,8 @@ const $ = (id) => document.getElementById(id);
 FM.clock($('clock'));
 const params = new URLSearchParams(location.search);
 let ticker = (params.get('t') || FM.store.get('fm.panel.last', 'SPY')).toUpperCase();
+let follow = Number(params.get('follow') || 0);   // 0 = manual, n = follow DAS montage n
+let das = null, dasKey = '';
 let prints = [];            // newest first
 let spark = [];
 let summary = null, status = null, wsUp = false;
@@ -96,19 +102,48 @@ let filtersOpen = false;
 const conn = FM.connect(onMsg, (ws) => ws.send(JSON.stringify({ op: 'view', view: 'panel', ticker })),
   (up) => { wsUp = up; FM.badge($('badge'), status, up); });
 
-function setTicker(t) {
+function syncUrl() {
+  history.replaceState(null, '', '/panel?t=' + encodeURIComponent(ticker) + (follow ? '&follow=' + follow : ''));
+}
+function setTicker(t, fromLink) {
   t = (t || '').trim().toUpperCase();
-  if (!t || t === ticker) { $('tk').value = ticker; return; }
+  if (!fromLink && follow) { follow = 0; buildFollow(true); }   // typing a symbol takes the panel off the link
+  if (!t || t === ticker) { $('tk').value = ticker; syncUrl(); return; }
   ticker = t; prints = []; spark = []; summary = null; unseen = 0;
   FM.store.set('fm.panel.last', ticker);
-  history.replaceState(null, '', '/panel?t=' + encodeURIComponent(ticker));
+  syncUrl();
   conn.send({ op: 'view', view: 'panel', ticker });
   renderAll();
 }
 
+// ---------------- DAS link ----------------
+function buildFollow(force) {
+  const ms = (das && das.montages) || [];
+  const live = das && das.ts && Date.now() / 1000 - das.ts < 30;
+  const key = JSON.stringify(ms) + '|' + follow + '|' + !!live;
+  if (!force && key === dasKey) return;
+  dasKey = key;
+  const opts = ['<option value="0">Manual</option>'].concat(ms.map((m) =>
+    `<option value="${m.slot}">DAS ${m.slot} · ${FM.esc(m.sym)}</option>`));
+  if (follow && !ms.some((m) => m.slot === follow)) opts.push(`<option value="${follow}">DAS ${follow} · —</option>`);
+  $('follow').innerHTML = opts.join('');
+  $('follow').value = String(follow);
+  $('follow').classList.toggle('on', !!follow);
+  $('follow').title = live ? 'Follow a DAS montage' : 'DAS Link helper is not running on your PC';
+}
+function applyFollow() {
+  if (!follow || !das) return;
+  const m = das.montages.find((x) => x.slot === follow);
+  if (m && m.sym !== ticker) setTicker(m.sym, true);
+}
+function onDas(d) { if (!d) return; das = d; buildFollow(); applyFollow(); }
+$('follow').addEventListener('change', () => { follow = Number($('follow').value); FM.store.set('fm.panel.follow', follow); syncUrl(); buildFollow(true); applyFollow(); });
+
 function onMsg(m) {
+  if (m.t === 'das') { onDas(m.das); return; }
   if (m.t === 'summaries') {
     status = m.status;
+    onDas(m.das);
     FM.badge($('badge'), status, wsUp);
     const d = m.data.find((x) => x.sym === ticker);
     if (d) { summary = d; renderHero(); }
@@ -297,7 +332,7 @@ $('tk').addEventListener('blur', () => { $('tk').value = ticker; $('tk').style.w
 $('tk').addEventListener('focus', () => { $('tk').style.width = '6.6ch'; $('tk').select(); });
 
 function renderAll() { renderHero(); renderTape(true); }
-buildFilters(); buildViews(); sizeTape(); renderAll();
+buildFilters(); buildViews(); sizeTape(); buildFollow(true); renderAll();
 </script>
 </body>
 </html>

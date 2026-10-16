@@ -38,7 +38,8 @@ def _authed(cookies) -> bool:
 @app.middleware("http")
 async def guard(request: Request, call_next):
     open_paths = {"/login", "/healthz", "/static/style.css"}
-    if request.url.path not in open_paths and not _authed(request.cookies):
+    key_ok = bool(config.APP_PASSWORD) and hmac.compare_digest(request.headers.get("x-app-key", ""), config.APP_PASSWORD)
+    if request.url.path not in open_paths and not key_ok and not _authed(request.cookies):
         if request.url.path.startswith("/api"):
             return JSONResponse({"error": "login required"}, status_code=401)
         return RedirectResponse("/login")
@@ -99,6 +100,19 @@ async def set_watchlist(request: Request):
         syms = syms.replace(" ", ",").split(",")
     await hub.set_watchlist(syms)
     return {"watchlist": hub.watchlist}
+
+
+@app.post("/api/das")
+async def das_update(request: Request):
+    """From the DAS Link helper on the trading PC: the symbol in each open montage."""
+    body = await request.json()
+    await hub.set_das(body.get("montages") or [])
+    return {"ok": True, "tracked": hub.tracked()}
+
+
+@app.get("/api/das")
+async def das_state():
+    return hub.das
 
 
 @app.get("/api/probe")

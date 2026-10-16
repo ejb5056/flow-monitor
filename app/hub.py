@@ -71,6 +71,8 @@ class Hub:
         self.store = store
         self.feed = None
         self.watchlist: list[str] = store.get("watchlist", config.DEFAULT_WATCHLIST)
+        self.extras: list[str] = []  # names open in a DAS montage but not on the watchlist
+        self.das = {"montages": [], "ts": 0.0}
         self.t: dict[str, TickerState] = {s: TickerState(s) for s in self.watchlist}
         self.quotes: dict[str, Quote] = {}
         self.grouper = Grouper()
@@ -137,6 +139,9 @@ class Hub:
         st.levels_ts = time.time()
 
     # ---- watchlist ----------------------------------------------------------------------------
+    def tracked(self) -> list[str]:
+        return self.watchlist + [s for s in self.extras if s not in self.watchlist]
+
     async def set_watchlist(self, symbols: list[str]):
         clean = []
         for s in symbols:
@@ -148,14 +153,40 @@ class Hub:
             if s not in self.t:
                 self.t[s] = TickerState(s)
         for s in list(self.t):
-            if s not in clean:
+            if s not in clean and s not in self.extras:
                 del self.t[s]
         self.watchlist = clean
         self.store.put("watchlist", clean)
         self._restore_missing()
         if self.feed:
-            await self.feed.on_watchlist(clean)
+            await self.feed.on_watchlist(self.tracked())
         self.broadcast({"t": "watchlist", "symbols": clean})
+
+    # ---- DAS montage link ---------------------------------------------------------------------
+    async def set_das(self, montages: list[dict]):
+        """Called by the PC helper whenever a DAS montage changes symbol. Names not on the watchlist
+        are tracked as extras for as long as a montage shows them."""
+        clean = []
+        for m in montages[:8]:
+            sym = str(m.get("sym", "")).strip().upper()
+            if sym and sym.replace(".", "").isalnum() and len(sym) <= 6:
+                clean.append({"slot": int(m.get("slot", len(clean) + 1)), "sym": sym})
+        changed = [m["sym"] for m in clean] != [m["sym"] for m in self.das["montages"]]
+        self.das = {"montages": clean, "ts": time.time()}
+        if not changed:
+            return
+        new_extras = [m["sym"] for m in clean if m["sym"] not in self.watchlist]
+        for s in new_extras:
+            if s not in self.t:
+                self.t[s] = TickerState(s)
+        for s in self.extras:
+            if s not in new_extras and s not in self.watchlist:
+                self.t.pop(s, None)
+        self.extras = list(dict.fromkeys(new_extras))
+        self._restore_missing()
+        if self.feed:
+            await self.feed.on_watchlist(self.tracked())
+        self.broadcast({"t": "das", "das": self.das})
 
     def _restore_missing(self):
         start = datetime.now(ET).replace(hour=4, minute=0, second=0, microsecond=0).timestamp()
@@ -181,7 +212,7 @@ class Hub:
 
     def summaries(self) -> dict:
         return {"t": "summaries", "ts": time.time(), "status": self.status, "watchlist": self.watchlist,
-                "data": [self.t[s].summary() for s in self.watchlist if s in self.t]}
+                "das": self.das, "data": [self.t[s].summary() for s in self.tracked() if s in self.t]}
 
     # ---- main loop ----------------------------------------------------------------------------
     def _accept(self, p: Print):

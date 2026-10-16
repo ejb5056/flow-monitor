@@ -47,6 +47,16 @@ With `FEED=probe` and free-plan keys, open `https://<your-domain>/api/probe` aft
 - how many quote subscriptions are accepted before an error;
 - whether per-contract trade subscriptions hit the same cap.
 
+## DAS Link (panel follows your DAS montage)
+
+`tools/das-link/` is a small PowerShell helper for the trading PC. It needs no install. Four times a second it reads DAS window titles. A montage title starts with the symbol, e.g. `AAPL  345.6 - 345.75  Apple Inc.`. It then sends the app the symbol in each montage. Montages are numbered by screen position: DAS 1 is the top-left one, counting down, then right. In a panel, set **LINK** to `DAS 1`, `DAS 2`, … and the panel switches whenever that montage's symbol changes. Typing a symbol into the panel puts it back on Manual. A montage symbol that isn't on the watchlist is tracked while it's open, but stays off the strip.
+
+The helper only reads window titles. It never clicks, types, or sends anything to DAS.
+
+1. Put the three files in one folder, e.g. `C:\DAS Link`.
+2. Double-click **DAS Link - test.cmd** with DAS open. It lists the montages it sees and doesn't send anything.
+3. Double-click **DAS Link.cmd**. The first run asks for the app address and password, and saves them next to the script in `das-link.json`. Keep that window open (minimized is fine) while you trade.
+
 ## Run locally
 
 ```
