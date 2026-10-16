@@ -87,7 +87,7 @@ let unseen = 0;
 const MAX_KEEP = 3000, MAX_RENDER = 600, ROW_H = 22;
 
 const DEF = { premMin: '', premMax: '', sizeMin: '', sizeMax: '', dteMin: '', dteMax: '',
-  sides: { ASK: true, BID: true, MID: true, NA: true }, kinds: { SWEEP: true, BLOCK: true, SPLIT: true, REG: true }, hideMulti: false };
+  sides: { ASK: true, BID: true, MID: true, NA: true }, kinds: { SWEEP: true, BLOCK: true, SPLIT: true, REG: true }, hideMulti: true };
 let F = Object.assign(JSON.parse(JSON.stringify(DEF)), FM.store.get('fm.filters', {}));
 let rowsShown = FM.store.get('fm.rows', 10);
 let filtersOpen = false;
@@ -259,7 +259,7 @@ function rowHtml(p) {
   const side = p.side === 'NA' ? '—' : p.side;
   return `<div class="tcols trow${p.premium >= 5e5 ? ' big' : ''}">
     <span class="mute">${FM.time(p.ts)}</span><span class="r ${c}">${FM.strike(p.strike)}</span><span class="${c}" style="font-weight:600">${p.cp}</span>
-    <span class="neu">${exp}</span><span class="r neu">${p.dte}d</span><span class="r">${p.size.toLocaleString('en-US')}</span>
+    <span class="neu">${exp}${p.multi ? '<span class="ml" title="Multi-leg">ML</span>' : ''}</span><span class="r neu">${p.dte}d</span><span class="r">${p.size.toLocaleString('en-US')}</span>
     <span class="${c}">${side}</span><span class="r" style="${p.premium >= 1e5 ? 'font-weight:600;color:var(--hi)' : 'color:var(--text2)'}">${FM.money(p.premium)}</span></div>`;
 }
 
