@@ -1,7 +1,7 @@
 # DAS Link: tells the flow monitor which symbol is in each DAS montage, so a panel can follow it.
 #
 # It reads window titles only. It never clicks, types, or sends anything to DAS.
-# A DAS montage title looks like "AAPL  345.6 - 345.75  Apple Inc...". Montages are numbered by position
+# A DAS montage title looks like "AAPL     348.05 -- 348.15     Apple Inc. - Common Stock". Montages are numbered by position
 # on screen: top-to-bottom, then left-to-right (DAS 1 = the top-left one).
 #
 #   DAS Link - test.cmd   shows what it detects, sends nothing
@@ -56,7 +56,7 @@ public static class DasWindows {
 "@
 
 # Symbol, whitespace, then a "low - high" price range: the DAS montage title. Chart titles ("AAPL--1 Minute--") don't match.
-$montageRx = '^\s*([A-Z][A-Z0-9.\-]{0,7})\s+\d+(\.\d+)?\s*-\s*\d+(\.\d+)?'
+$montageRx = '^\s*([A-Z][A-Z0-9.\-]{0,7})\s+\d+(\.\d+)?\s*-+\s*\d+(\.\d+)?'
 
 function Get-Montages {
     $procs = @(Get-Process -Name 'dastrader' -ErrorAction SilentlyContinue)
