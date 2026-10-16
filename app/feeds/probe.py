@@ -71,6 +71,11 @@ async def run_probe(hub=None):
         REPORT["conditions_error"] = str(e)
 
     symbols = sorted(snaps)
+    try:
+        snaps60 = await rest.snapshots(sym, 60)
+        symbols = sorted(snaps60) or symbols
+    except Exception:
+        pass
     url = f"{config.ALPACA_STREAM_URL}/v1beta1/{config.ALPACA_OPTIONS_FEED}"
     try:
         async with websockets.connect(url, max_size=None, additional_headers={"Content-Type": "application/msgpack"}) as ws:
@@ -114,12 +119,20 @@ async def run_probe(hub=None):
             REPORT["quote_cap_error"] = cap_error
             REPORT["quote_test_ran_out_of_contracts"] = cap_error is None
 
-            # 5. do per-contract trade subscriptions count against the same cap?
+            # 5. per-contract trade subscriptions: how many before an error (SPY + QQQ + NVDA chains, up to 12,000)?
             await send({"action": "unsubscribe", "quotes": symbols[:1600]})
             await _recv_until(ws, {"subscription", "error"}, 5)
+            many = list(symbols)
+            for extra in ("QQQ", "NVDA"):
+                try:
+                    many += sorted(await rest.snapshots(extra, 60))
+                except Exception:
+                    pass
+            many = many[:12000]
+            REPORT["trade_test_contracts_available"] = len(many)
             t_acc, t_err = 0, None
-            for i in range(0, min(len(symbols), 1600), 200):
-                await send({"action": "subscribe", "trades": symbols[i:i + 200]})
+            for i in range(0, len(many), 500):
+                await send({"action": "subscribe", "trades": many[i:i + 500]})
                 m = await _recv_until(ws, {"subscription", "error"}, 10)
                 if not m or m.get("T") == "error":
                     t_err = m

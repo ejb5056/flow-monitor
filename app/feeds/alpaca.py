@@ -21,6 +21,7 @@ import websockets
 
 from app import config
 from app.engine import classify
+from app.engine import gex
 from app.models import ET, ChainRow, Quote, Trade, parse_occ, root_of, today_et
 
 log = logging.getLogger("alpaca")
@@ -104,6 +105,11 @@ class AlpacaREST:
                               {"symbols": ",".join(syms), "feed": config.ALPACA_STOCK_FEED})
 
 
+def _chunks(items: list, n: int):
+    for i in range(0, len(items), n):
+        yield items[i:i + n]
+
+
 def parity_spot(rows: list[ChainRow], snaps: dict) -> float | None:
     """Spot implied by put-call parity on the nearest expiry, for indexes the stock feed doesn't carry."""
     if not rows:
@@ -137,30 +143,53 @@ class AlpacaFeed:
         self.trade_subs: set[str] = set()
         self._stock_ws = None
         self._resub = asyncio.Event()
+        self.trade_cap = config.TRADE_SUB_MAX  # lowered automatically if Alpaca reports a symbol limit
 
     # ---- chain + levels -----------------------------------------------------------------------
     async def refresh_chain(self, sym: str):
         snaps, oi = await asyncio.gather(self.rest.snapshots(sym, config.GEX_MAX_DTE),
                                          self.rest.open_interest(sym, config.GEX_MAX_DTE))
+        st = self.hub.t.get(sym)
+        spot = st.spot if st and st.spot else None
+        if spot is None and sym not in ("SPX", "NDX", "RUT"):
+            try:
+                ss = (await self.rest.stock_snapshots([sym])).get(sym) or {}
+                spot = ((ss.get("latestTrade") or {}).get("p")) or ((ss.get("dailyBar") or {}).get("c"))
+                if spot:
+                    self.hub.on_spot(sym, spot, prev_close=((ss.get("prevDailyBar") or {}).get("c")))
+            except Exception as e:
+                log.warning("spot %s: %s", sym, e)
         rows = []
+        derived = 0
         for osym, s in snaps.items():
             c = parse_occ(osym)
             if c is None:
                 continue
             g = s.get("greeks") or {}
             day = s.get("dailyBar") or {}
-            rows.append(ChainRow(osym, c.strike, c.cp, c.expiry, oi.get(osym, 0), s.get("impliedVolatility"),
-                                 g.get("gamma"), g.get("delta"), int(day.get("v") or 0)))
+            iv, gamma, delta = s.get("impliedVolatility"), g.get("gamma"), g.get("delta")
+            if iv is None and spot:
+                # The feed sent no greeks (the free indicative feed doesn't): solve IV from the quote mid ourselves.
+                q = s.get("latestQuote") or {}
+                bid, ask = q.get("bp") or 0.0, q.get("ap") or 0.0
+                if ask > 0 and bid >= 0 and ask >= bid:
+                    t = gex.years_to(c.expiry)
+                    iv = gex.implied_vol((bid + ask) / 2, spot, c.strike, t, c.cp)
+                    if iv:
+                        gamma = gex.bs_gamma(spot, c.strike, t, iv)
+                        delta = gex.bs_delta(spot, c.strike, t, iv, c.cp)
+                        derived += 1
+            rows.append(ChainRow(osym, c.strike, c.cp, c.expiry, oi.get(osym, 0), iv, gamma, delta, int(day.get("v") or 0)))
             q = s.get("latestQuote")
             if q and q.get("ap"):
                 self.hub.on_quote(Quote(osym, _ts(q.get("t")), q.get("bp") or 0.0, q["ap"], q.get("bs") or 0, q.get("as") or 0))
-        spot = None
         if sym in ("SPX", "NDX", "RUT"):
             spot = parity_spot(rows, snaps)
             if spot:
                 self.hub.on_spot(sym, spot)
         await self.hub.set_chain(sym, rows, spot)
-        log.info("chain %s: %d contracts, %d with OI", sym, len(rows), sum(1 for r in rows if r.oi))
+        log.info("chain %s: %d contracts, %d with OI, %d greeks solved from quotes", sym, len(rows),
+                 sum(1 for r in rows if r.oi), derived)
 
     async def chain_loop(self):
         while True:
@@ -207,6 +236,26 @@ class AlpacaFeed:
             want.update(r.symbol for r in ranked[:per])
         return set(list(want)[: config.QUOTE_BUDGET])
 
+    def wanted_trades(self) -> set[str]:
+        """Per-contract trade subscriptions: every contract within TRADE_MAX_DTE days and TRADE_MONEYNESS of
+        spot on each tracked name, nearest-the-money first, capped at TRADE_SUB_MAX overall."""
+        names = [s for s in self.hub.tracked() if s in self.hub.t and self.hub.t[s].chain]
+        if not names:
+            return set()
+        today = today_et()
+        per = max(50, config.TRADE_SUB_MAX // len(names))
+        want = set()
+        for s in names:
+            st = self.hub.t[s]
+            spot = st.spot or 0
+            if spot <= 0:
+                continue
+            rows = [r for r in st.chain.values() if (r.expiry - today).days <= config.TRADE_MAX_DTE
+                    and abs(r.strike - spot) / spot <= config.TRADE_MONEYNESS]
+            rows.sort(key=lambda r: abs(r.strike - spot) / spot + 0.001 * max(0, (r.expiry - today).days))
+            want.update(r.symbol for r in rows[:per])
+        return want
+
     # ---- options stream -----------------------------------------------------------------------
     async def _osend(self, msg: dict):
         await self.ows.send(msgpack.packb(msg))
@@ -217,12 +266,16 @@ class AlpacaFeed:
         if config.TRADES_SUBSCRIPTION == "wildcard":
             want_t = {"*"}
         else:
-            want_t = {r for s in self.hub.tracked() if s in self.hub.t for r in self.hub.t[s].chain}
+            want_t = set(sorted(self.wanted_trades())[: self.trade_cap])
         add_t, drop_t = want_t - self.trade_subs, self.trade_subs - want_t
-        if drop_q or drop_t:
-            await self._osend({"action": "unsubscribe", "quotes": sorted(drop_q), "trades": sorted(drop_t)})
-        if add_q or add_t:
-            await self._osend({"action": "subscribe", "quotes": sorted(add_q), "trades": sorted(add_t)})
+        for chunk in _chunks(sorted(drop_q), 500):
+            await self._osend({"action": "unsubscribe", "quotes": chunk})
+        for chunk in _chunks(sorted(drop_t), 500):
+            await self._osend({"action": "unsubscribe", "trades": chunk})
+        for chunk in _chunks(sorted(add_q), 500):
+            await self._osend({"action": "subscribe", "quotes": chunk})
+        for chunk in _chunks(sorted(add_t), 500):
+            await self._osend({"action": "subscribe", "trades": chunk})
         self.quote_subs, self.trade_subs = want_q, want_t
 
     async def options_stream(self):
@@ -283,6 +336,11 @@ class AlpacaFeed:
         elif T == "error":
             self.hub.status["msg"] = f"alpaca error {m.get('code')}: {m.get('msg')}"
             log.error("alpaca error %s", m)
+            if m.get("code") == 405 and self.trade_subs and "*" not in self.trade_subs:
+                # Symbol limit: shrink the trade set by a fifth and try again.
+                self.trade_cap = max(200, int(len(self.trade_subs) * 0.8))
+                log.warning("symbol limit hit; trade subscriptions capped at %d", self.trade_cap)
+                self._resub.set()
 
     # ---- stock stream for spot ----------------------------------------------------------------
     async def stock_stream(self):

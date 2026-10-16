@@ -24,6 +24,49 @@ def bs_gamma(spot: float, strike: float, t_years: float, iv: float, r: float = c
     return math.exp(-0.5 * d1 * d1) / (_SQ2PI * spot * vs)
 
 
+def _ncdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_price(spot: float, strike: float, t_years: float, iv: float, cp: str, r: float = config.RISK_FREE) -> float:
+    t = max(t_years, 1.0 / (365 * 24))
+    vs = iv * math.sqrt(t)
+    d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / vs
+    d2 = d1 - vs
+    if cp == "C":
+        return spot * _ncdf(d1) - strike * math.exp(-r * t) * _ncdf(d2)
+    return strike * math.exp(-r * t) * _ncdf(-d2) - spot * _ncdf(-d1)
+
+
+def bs_delta(spot: float, strike: float, t_years: float, iv: float, cp: str, r: float = config.RISK_FREE) -> float:
+    t = max(t_years, 1.0 / (365 * 24))
+    d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / (iv * math.sqrt(t))
+    return _ncdf(d1) if cp == "C" else _ncdf(d1) - 1.0
+
+
+def implied_vol(price: float, spot: float, strike: float, t_years: float, cp: str) -> float | None:
+    """Bisection on Black-Scholes. None when the price is below intrinsic or above any sane vol."""
+    if price <= 0 or spot <= 0 or strike <= 0:
+        return None
+    intrinsic = max(0.0, spot - strike) if cp == "C" else max(0.0, strike - spot)
+    if price <= intrinsic + 1e-4:
+        return None
+    lo, hi = 0.01, 5.0
+    if bs_price(spot, strike, t_years, hi, cp) < price:
+        return None
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if bs_price(spot, strike, t_years, mid, cp) > price:
+            hi = mid
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)
+
+
+def years_to(expiry: date, now: datetime | None = None) -> float:
+    return _t_years(expiry, now or datetime.now(ET))
+
+
 def _t_years(expiry: date, now: datetime) -> float:
     close = datetime(expiry.year, expiry.month, expiry.day, 16, 0, tzinfo=ET)
     return max((close - now).total_seconds(), 0.0) / (365.0 * 86400)

@@ -25,7 +25,11 @@ ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")
 ALPACA_TRADING_URL = os.getenv("ALPACA_TRADING_URL", "https://paper-api.alpaca.markets")
 ALPACA_STREAM_URL = os.getenv("ALPACA_STREAM_URL", "wss://stream.data.alpaca.markets")
 # "wildcard" = one subscription for every option trade, filtered here; "contracts" = per-contract trade subscriptions.
-TRADES_SUBSCRIPTION = os.getenv("TRADES_SUBSCRIPTION", "wildcard").lower()
+TRADES_SUBSCRIPTION = os.getenv("TRADES_SUBSCRIPTION", "contracts").lower()
+# Per-contract trade subscriptions (the probe found these aren't capped by the quote limit on the free plan).
+TRADE_SUB_MAX = _i("TRADE_SUB_MAX", 6000)
+TRADE_MAX_DTE = _i("TRADE_MAX_DTE", 45)
+TRADE_MONEYNESS = _f("TRADE_MONEYNESS", 0.20)
 QUOTE_BUDGET = _i("QUOTE_BUDGET", 1000)
 
 # Storage. On Railway mount a volume at /data.

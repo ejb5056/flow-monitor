@@ -123,3 +123,15 @@ def test_store_baselines(tmp_path):
     from app.store import bucket_of
     b = bl[("NVDA", bucket_of(base.timestamp()))]
     assert b.days == 6 and 1e6 < b.net_std < 2e6
+
+
+def test_implied_vol_roundtrip():
+    from app.engine.gex import bs_price, implied_vol, bs_delta
+    for cp in "CP":
+        for k in (90, 100, 110):
+            p = bs_price(100, k, 20 / 365, 0.35, cp)
+            iv = implied_vol(p, 100, k, 20 / 365, cp)
+            assert iv is not None and abs(iv - 0.35) < 1e-3
+    assert implied_vol(0.5, 100, 90, 20 / 365, "C") is None  # below intrinsic
+    assert 0.45 < bs_delta(100, 100, 30 / 365, 0.3, "C") < 0.56
+    assert -0.56 < bs_delta(100, 100, 30 / 365, 0.3, "P") < -0.44
