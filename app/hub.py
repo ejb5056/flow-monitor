@@ -71,7 +71,8 @@ class Hub:
         self.store = store
         self.feed = None
         self.watchlist: list[str] = store.get("watchlist", config.DEFAULT_WATCHLIST)
-        self.extras: list[str] = []  # names open in a DAS montage but not on the watchlist
+        self.extras: list[str] = []  # names a panel is showing that aren't on the watchlist
+        self._extra_seen: dict[str, float] = {}
         self.das = {"montages": [], "ts": 0.0}
         self.t: dict[str, TickerState] = {s: TickerState(s) for s in self.watchlist}
         self.quotes: dict[str, Quote] = {}
@@ -162,31 +163,48 @@ class Hub:
             await self.feed.on_watchlist(self.tracked())
         self.broadcast({"t": "watchlist", "symbols": clean})
 
-    # ---- DAS montage link ---------------------------------------------------------------------
+    # ---- DAS montage link and off-watchlist names ----------------------------------------------
     async def set_das(self, montages: list[dict]):
-        """Called by the PC helper whenever a DAS montage changes symbol. Names not on the watchlist
-        are tracked as extras for as long as a montage shows them."""
+        """Called by the PC helper with the symbol in each DAS montage. Only stored and relayed: a symbol
+        costs data budget only once a panel actually shows it (see ensure_tracked)."""
         clean = []
-        for m in montages[:8]:
+        for m in montages[:24]:
             sym = str(m.get("sym", "")).strip().upper()
             if sym and sym.replace(".", "").isalnum() and len(sym) <= 6:
                 clean.append({"slot": int(m.get("slot", len(clean) + 1)), "sym": sym})
-        changed = [m["sym"] for m in clean] != [m["sym"] for m in self.das["montages"]]
+        changed = clean != self.das["montages"]
         self.das = {"montages": clean, "ts": time.time()}
-        if not changed:
-            return
-        new_extras = [m["sym"] for m in clean if m["sym"] not in self.watchlist]
-        for s in new_extras:
-            if s not in self.t:
-                self.t[s] = TickerState(s)
-        for s in self.extras:
-            if s not in new_extras and s not in self.watchlist:
-                self.t.pop(s, None)
-        self.extras = list(dict.fromkeys(new_extras))
+        if changed:
+            self.broadcast({"t": "das", "das": self.das})
+
+    async def ensure_tracked(self, sym: str) -> bool:
+        """A panel is showing `sym`: track it even if it isn't on the watchlist (it stays off the strip)."""
+        if sym in self.t:
+            return True
+        if not sym.replace(".", "").isalnum() or len(sym) > 6 or len(self.extras) >= config.MAX_EXTRAS:
+            return False
+        self.t[sym] = TickerState(sym)
+        self.extras.append(sym)
+        self._extra_seen[sym] = time.time()
         self._restore_missing()
         if self.feed:
             await self.feed.on_watchlist(self.tracked())
-        self.broadcast({"t": "das", "das": self.das})
+        return True
+
+    async def prune_extras(self):
+        """Drop off-watchlist names no panel has shown for EXTRA_IDLE_S."""
+        now = time.time()
+        viewed = {c.ticker for c in self.clients if c.view == "panel"}
+        for s in viewed:
+            self._extra_seen[s] = now
+        drop = [s for s in self.extras if s not in self.watchlist and now - self._extra_seen.get(s, 0) > config.EXTRA_IDLE_S]
+        if not drop:
+            return
+        for s in drop:
+            self.extras.remove(s)
+            self.t.pop(s, None)
+        if self.feed:
+            await self.feed.on_watchlist(self.tracked())
 
     def _restore_missing(self):
         start = datetime.now(ET).replace(hour=4, minute=0, second=0, microsecond=0).timestamp()
@@ -265,6 +283,7 @@ class Hub:
                     self.broadcast({"t": "spark", "sym": st.sym, "ts": now, "score": st.result["score"]}, ticker=st.sym)
                 self.store.add_spark(rows)
                 self._daily_jobs()
+                await self.prune_extras()
             if now - last_levels >= 60.0 or now - last_walls >= 5.0:
                 flip = now - last_levels >= 60.0
                 last_walls = now

@@ -35,6 +35,8 @@ PRINT_RETENTION_DAYS = _i("PRINT_RETENTION_DAYS", 30)
 DEFAULT_WATCHLIST = [s.strip().upper() for s in os.getenv(
     "WATCHLIST", "SPY,QQQ,NVDA,TSLA,AAPL,AMD,META,AMZN,MSFT,PLTR").split(",") if s.strip()]
 MAX_WATCHLIST = _i("MAX_WATCHLIST", 20)
+MAX_EXTRAS = _i("MAX_EXTRAS", 8)  # off-watchlist names tracked because a panel shows them (DAS link or typed)
+EXTRA_IDLE_S = _i("EXTRA_IDLE_S", 600)  # stop tracking such a name after no panel has shown it this long
 
 # Print classification.
 SIDE_ASK_AT = _f("SIDE_ASK_AT", 0.75)  # position in the spread at or above which a print counts as ask-side

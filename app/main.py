@@ -140,6 +140,7 @@ async def ws_endpoint(ws: WebSocket):
                 t = (msg.get("ticker") or "").upper() or None
                 c.ticker = t
                 if c.view == "panel" and t:
+                    await hub.ensure_tracked(t)
                     c.send(hub.snapshot_for(t))
             elif op == "ping":
                 c.send({"t": "pong", "ts": time.time()})

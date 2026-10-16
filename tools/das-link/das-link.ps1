@@ -13,7 +13,7 @@ $cfgPath = Join-Path $PSScriptRoot 'das-link.json'
 
 # Which montages count: 'left' = only those whose window centre is in the left half of the whole
 # desktop (all monitors together), 'right' = right half, 'all' = every montage.
-$Side = 'left'
+$Side = 'all'
 
 Add-Type -AssemblyName System.Windows.Forms
 $desk = [System.Windows.Forms.SystemInformation]::VirtualScreen

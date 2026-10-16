@@ -49,7 +49,7 @@ With `FEED=probe` and free-plan keys, open `https://<your-domain>/api/probe` aft
 
 ## DAS Link (panel follows your DAS montage)
 
-`tools/das-link/` is a small PowerShell helper for the trading PC. It needs no install. Four times a second it reads DAS window titles. A montage title starts with the symbol, e.g. `AAPL  345.6 - 345.75  Apple Inc.`. It then sends the app the symbol in each montage. Montages are numbered by screen position: DAS 1 is the top-left one, counting down, then right. In a panel, set **LINK** to `DAS 1`, `DAS 2`, … and the panel switches whenever that montage's symbol changes. Typing a symbol into the panel puts it back on Manual. A montage symbol that isn't on the watchlist is tracked while it's open, but stays off the strip.
+`tools/das-link/` is a small PowerShell helper for the trading PC. It needs no install. Four times a second it reads DAS window titles. A montage title starts with the symbol, e.g. `AAPL  345.6 - 345.75  Apple Inc.`. It then sends the app the symbol in each montage. Montages are numbered by screen position: DAS 1 is the top-left one, counting down, then right. In a panel, set **LINK** to `DAS 1`, `DAS 2`, … and the panel switches whenever that montage's symbol changes. Typing a symbol into the panel puts it back on Manual. Every montage is picked up, but a symbol only costs data budget while a panel is actually showing it. Off-watchlist names shown in a panel, whether linked or typed, are tracked and stay off the strip. They're dropped 10 minutes after no panel shows them.
 
 The helper only reads window titles. It never clicks, types, or sends anything to DAS.
 
