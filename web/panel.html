@@ -207,7 +207,7 @@ function renderHero() {
   }).join('');
 
   const L = [['Call wall', lv.call_wall, 'bull'], ['Max pain', lv.max_pain, 'neu'], ['Spot', d.spot, ''],
-    ['γ flip', lv.flip, 'neu'], ['Put wall', lv.put_wall, 'bear']].filter((x) => x[1] != null);
+    ['γ flip', lv.flip, 'neu'], ['γ magnet', lv.magnet, 'neu'], ['Put wall', lv.put_wall, 'bear']].filter((x) => x[1] != null);
   L.sort((a, b) => b[1] - a[1]);
   $('levels').innerHTML = L.length > 1 ? L.map(([n, v, c2]) =>
     `<div class="lv${n === 'Spot' ? ' spot' : ''}"><span class="${c2}">${n}</span><span>${n === 'γ flip' || n === 'Spot' ? FM.px(v) : FM.strike(v)}</span><span>${n === 'Spot' ? '' : FM.pct(v, d.spot)}</span></div>`).join('')

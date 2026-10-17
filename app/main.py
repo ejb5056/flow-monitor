@@ -159,6 +159,9 @@ async def start():
     if config.FEED == "alpaca":
         from app.feeds.alpaca import AlpacaFeed
         hub.feed = AlpacaFeed(hub)
+    elif config.FEED == "uw":
+        from app.feeds.uw import UWFeed
+        hub.feed = UWFeed(hub)
     elif config.FEED == "probe":
         from app.feeds.probe import run_probe
         hub.status.update(msg="probe running, see /api/probe")

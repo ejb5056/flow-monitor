@@ -32,6 +32,13 @@ TRADE_MAX_DTE = _i("TRADE_MAX_DTE", 45)
 TRADE_MONEYNESS = _f("TRADE_MONEYNESS", 0.20)
 QUOTE_BUDGET = _i("QUOTE_BUDGET", 1000)
 
+# Unusual Whales (FEED=uw).
+UW_API_TOKEN = os.getenv("UW_API_TOKEN", "")
+UW_BASE_URL = os.getenv("UW_BASE_URL", "https://api.unusualwhales.com")
+UW_POLL_S = _f("UW_POLL_S", 3.0)  # tape poll interval
+UW_LEVELS_S = _i("UW_LEVELS_S", 60)  # walls / flip / max pain refresh
+UW_MAX_PAGES = _i("UW_MAX_PAGES", 20)  # 500 trades per page
+
 # Storage. On Railway mount a volume at /data.
 DB_PATH = os.getenv("DB_PATH", "/data/flow.db" if os.path.isdir("/data") else "./data/flow.db")
 PRINT_RETENTION_DAYS = _i("PRINT_RETENTION_DAYS", 30)

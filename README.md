@@ -37,6 +37,19 @@ Every threshold and weight is an environment variable (`app/config.py`), so it c
 | `ALPACA_TRADING_URL` | `https://paper-api.alpaca.markets` for paper keys (the default), `https://api.alpaca.markets` for live keys |
 | `WATCHLIST` | the starting list, e.g. `SPY,QQQ,NVDA,...`. After the first run, edit it in the app. |
 
+## Unusual Whales instead of Alpaca (`FEED=uw`)
+
+Set `FEED=uw` and `UW_API_TOKEN` (from unusualwhales.com/dashboard/api). The Basic API plan has no websocket, so the app polls:
+
+- **The tape** every `UW_POLL_S` seconds (default 3) for all tracked names in one request.
+- **Walls, flip and gamma magnet** every `UW_LEVELS_S` seconds (default 60). These come from UW's GEX levels.
+- **Max pain** on the same schedule.
+- **Gamma regime** once a day, from UW's daily greek exposure: the sign of net call + put gamma.
+
+Each UW trade carries the NBBO at execution. Ask/bid side is classified here with the same rule as the Alpaca feed, and UW's side tags aren't used. Sweeps come from the trade's condition (ISO) or from fills on 2+ exchanges. Multi-leg also comes from the condition.
+
+`/api/status` → `uw` shows request and error counts, the last error, and every condition value seen. Check it on day one to confirm the sweep and multi-leg mapping.
+
 ## Before paying for Alpaca: the probe
 
 With `FEED=probe` and free-plan keys, open `https://<your-domain>/api/probe` after about a minute. It reports:

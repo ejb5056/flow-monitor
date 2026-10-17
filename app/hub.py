@@ -42,7 +42,7 @@ class TickerState:
             "score": r["score"], "verdict": comp.verdict(r["score"]), "calibrated": r["calibrated"],
             "n": r["n_directional"], "gross": r["gross"],
             "comps": r["comps"],
-            "levels": {k: lv.get(k) for k in ("call_wall", "put_wall", "flip", "max_pain", "regime", "net_gex")},
+            "levels": {k: lv.get(k) for k in ("call_wall", "put_wall", "flip", "max_pain", "regime", "net_gex", "magnet")},
             "chain_size": len(self.chain),
         }
 
@@ -129,6 +129,8 @@ class Hub:
 
     async def recompute_levels(self, sym: str, with_flip: bool = True):
         """Walls, max pain and regime at the live spot every few seconds; the flip (a price scan) once a minute."""
+        if getattr(self.feed, "provides_levels", False):
+            return  # the feed supplies walls/flip itself (Unusual Whales)
         st = self.t.get(sym)
         if st is None or not st.chain or st.spot <= 0:
             return
